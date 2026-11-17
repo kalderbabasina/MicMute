@@ -1,0 +1,18 @@
+# Local build and IDE output
+/dist/
+/bin/
+/obj/
+/.vs/
+*.user
+*.suo
+
+# Private local preferences, logs, backups, and custom media
+MicMuteConfig.txt
+MicMuteConfig.txt.*
+*.bak
+*.log
+/assets/custom/
+/*backup*.zip
+/BACKUP.md
+/docs/v3-release-spec.md
+/docs/superpowers/

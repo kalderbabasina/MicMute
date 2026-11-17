@@ -1,0 +1,46 @@
+name: Build Windows packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Ensure Inno Setup is available
+        shell: powershell
+        run: |
+          $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          $installed = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+          if (-not $compiler -and -not $installed) {
+            choco install innosetup --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed ($LASTEXITCODE)." }
+          }
+      - name: Build and run smoke tests
+        shell: powershell
+        run: .\build.ps1 -Test -Installer
+      - name: Upload portable package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MicMute-portable
+          path: dist/MicMute-portable.zip
+          if-no-files-found: error
+      - name: Upload installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: MicMute-installer
+          path: dist/installer/MicMute-Setup.exe
+          if-no-files-found: error

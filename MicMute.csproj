@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{FA7767A4-309A-434D-878D-123139D2D98A}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>MicMute</RootNamespace>
+    <AssemblyName>MicMute2</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <LangVersion>5</LangVersion>
+    <CodePage>65001</CodePage>
+    <StartupObject>MicMute.Program</StartupObject>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Optimize>true</Optimize>
+    <DebugType>none</DebugType>
+    <OutputPath>dist\portable\</OutputPath>
+    <ApplicationIcon Condition="Exists('assets\default\mic_on.ico')">assets\default\mic_on.ico</ApplicationIcon>
+    <ApplicationManifest Condition="Exists('src\app.manifest')">src\app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Compile Include="src\*.cs" />
+    <None Include="src\app.manifest" Condition="Exists('src\app.manifest')" />
+    <Content Include="assets\default\mic_on.ico;assets\default\mic_off.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
