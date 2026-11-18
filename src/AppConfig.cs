@@ -6,12 +6,15 @@ using System.Windows.Forms;
 
 namespace MicMute
 {
+    public enum SoundSource { Style, Custom, Error, Information, Warning, Question, Beep, Silent }
+
     public sealed class AppConfig
     {
         private int overlaySize = 64;
         private int overlayOpacity = 100;
         private int iconStyle;
         private int soundStyle;
+        private SoundSource? muteSource, unmuteSource;
 
         public string AppLanguage { get; set; }
         public int IconStyle { get { return iconStyle; } set { iconStyle = Math.Max(0, Math.Min(2, value)); } }
@@ -28,12 +31,21 @@ namespace MicMute
         public bool LockOverlay { get; set; }
         public bool SoundsEnabled { get; set; }
         public bool SoundOnExternalChanges { get; set; }
+        public bool CheckUpdatesOnStartup { get; set; }
         public string TrayOnIcon { get; set; }
         public string TrayOffIcon { get; set; }
         public string OverlayOnImage { get; set; }
         public string OverlayOffImage { get; set; }
         public string MuteSound { get; set; }
         public string UnmuteSound { get; set; }
+        public SoundSource MuteSource { get { return ResolveSource(muteSource, MuteSound); } set { muteSource = value; } }
+        public SoundSource UnmuteSource { get { return ResolveSource(unmuteSource, UnmuteSound); } set { unmuteSource = value; } }
+
+        private static SoundSource ResolveSource(SoundSource? source, string path)
+        {
+            // Old configs only stored a path; keep their custom override without guessing a mode.
+            return source ?? (String.IsNullOrWhiteSpace(path) ? SoundSource.Style : SoundSource.Custom);
+        }
 
         public AppConfig()
         {
@@ -46,6 +58,7 @@ namespace MicMute
             OverlayX = int.MinValue;
             OverlayY = int.MinValue;
             SoundsEnabled = true;
+            CheckUpdatesOnStartup = true;
             TrayOnIcon = TrayOffIcon = OverlayOnImage = OverlayOffImage = MuteSound = UnmuteSound = "";
         }
 
@@ -86,11 +99,14 @@ namespace MicMute
                 bool flag;
                 int number;
                 Keys keys;
+                SoundSource soundSource;
                 switch (key)
                 {
-                    case "APP_LANGUAGE": value = value.ToLowerInvariant(); config.AppLanguage = IsValidLanguage(value) ? value : "en"; break;
+                    case "APP_LANGUAGE": config.AppLanguage = UiText.NormalizeLanguage(value); break;
                     case "ICON_STYLE": if (TryParseNumber(value, out number)) config.IconStyle = number; break;
                     case "SOUND_STYLE": if (TryParseNumber(value, out number)) config.SoundStyle = number; break;
+                    case "MUTE_SOURCE": if (TryParseSoundSource(value, out soundSource)) config.MuteSource = soundSource; break;
+                    case "UNMUTE_SOURCE": if (TryParseSoundSource(value, out soundSource)) config.UnmuteSource = soundSource; break;
                     case "MICROPHONE_DEVICE_ID": if (IsSingleLine(value)) config.MicrophoneDeviceId = value; break;
                     case "HOTKEY_ENABLED": if (TryParseBoolean(value, out flag)) config.HotkeyEnabled = flag; break;
                     case "HOTKEY_KEY": if (Enum.TryParse<Keys>(value, true, out keys) && IsValidHotkeyKey(keys)) config.HotkeyKey = keys; break;
@@ -103,6 +119,7 @@ namespace MicMute
                     case "LOCK_OVERLAY": if (TryParseBoolean(value, out flag)) config.LockOverlay = flag; break;
                     case "SOUNDS_ENABLED": if (TryParseBoolean(value, out flag)) config.SoundsEnabled = flag; break;
                     case "SOUND_ON_EXTERNAL_CHANGES": if (TryParseBoolean(value, out flag)) config.SoundOnExternalChanges = flag; break;
+                    case "CHECK_UPDATES_ON_STARTUP": if (TryParseBoolean(value, out flag)) config.CheckUpdatesOnStartup = flag; break;
                     case "TRAY_ON_ICON": if (IsSingleLine(value)) config.TrayOnIcon = value; break;
                     case "TRAY_OFF_ICON": if (IsSingleLine(value)) config.TrayOffIcon = value; break;
                     case "OVERLAY_ON_IMAGE": if (IsSingleLine(value)) config.OverlayOnImage = value; break;
@@ -121,13 +138,15 @@ namespace MicMute
             if (!IsValidHotkeyKey(HotkeyKey) || (HotkeyEnabled && HotkeyKey == Keys.None) || !IsValidModifiers(HotkeyModifiers))
                 throw new ArgumentException("The hotkey must contain a keyboard key and only Ctrl, Alt, or Shift modifiers.");
             string language = (AppLanguage ?? "").Trim().ToLowerInvariant();
-            if (!IsValidLanguage(language))
-                throw new ArgumentException("The application language must be en, ru, or es.");
+            if (!UiText.IsSupportedLanguage(language))
+                throw new ArgumentException("Unsupported application language.");
 
             var text = new StringBuilder();
             Append(text, "APP_LANGUAGE", language);
             Append(text, "ICON_STYLE", IconStyle);
             Append(text, "SOUND_STYLE", SoundStyle);
+            Append(text, "MUTE_SOURCE", MuteSource.ToString());
+            Append(text, "UNMUTE_SOURCE", UnmuteSource.ToString());
             Append(text, "MICROPHONE_DEVICE_ID", MicrophoneDeviceId);
             Append(text, "HOTKEY_ENABLED", HotkeyEnabled);
             Append(text, "HOTKEY_KEY", HotkeyKey.ToString());
@@ -140,6 +159,7 @@ namespace MicMute
             Append(text, "LOCK_OVERLAY", LockOverlay);
             Append(text, "SOUNDS_ENABLED", SoundsEnabled);
             Append(text, "SOUND_ON_EXTERNAL_CHANGES", SoundOnExternalChanges);
+            Append(text, "CHECK_UPDATES_ON_STARTUP", CheckUpdatesOnStartup);
             Append(text, "TRAY_ON_ICON", TrayOnIcon);
             Append(text, "TRAY_OFF_ICON", TrayOffIcon);
             Append(text, "OVERLAY_ON_IMAGE", OverlayOnImage);
@@ -203,14 +223,12 @@ namespace MicMute
             return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
         }
 
+        private static bool TryParseSoundSource(string value, out SoundSource result)
+        { return Enum.TryParse<SoundSource>(value, true, out result) && Enum.IsDefined(typeof(SoundSource), result); }
+
         private static bool IsValidModifiers(Keys value)
         {
             return (value & ~(Keys.Control | Keys.Alt | Keys.Shift)) == Keys.None;
-        }
-
-        private static bool IsValidLanguage(string value)
-        {
-            return value == "en" || value == "ru" || value == "es";
         }
 
         private static bool IsValidHotkeyKey(Keys key)

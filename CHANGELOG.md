@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.0
+
+- Optional Windows sign-in launch can be enabled or disabled in General settings, using the same per-user startup shortcut as the installer.
+- Sign-in launches do not open first-run settings, show a duplicate-instance dialog, or change microphone mute.
+- Added an opt-in Ukrainian Surzhyk interface. English remains the default.
+- Per-state audio sources: choose a native Windows signal, local WAV/MP3, the selected sound style, or silence. Existing custom-file choices still work.
+- Tray and overlay artwork previews now reflect custom choices, with a per-row return to the built-in style.
+- GitHub Releases check at startup with an opt-out and manual tray action. Installed copies offer checksum-verified Setup after confirmation; portable copies open the release page.
+
 ## 3.1.0
 
 - English is the default interface language; Russian and Spanish are selectable in Settings.

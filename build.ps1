@@ -26,7 +26,7 @@ if (-not $release -or $release -lt 528040) {
 $sources = @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.cs' -File | Sort-Object Name | ForEach-Object { $_.FullName })
 if ($sources.Count -eq 0) { throw 'No C# source files were found in src.' }
 New-Item -ItemType Directory -Path $portable -Force | Out-Null
-$compilerArgs = @('/nologo', '/codepage:65001', '/langversion:5', '/optimize+', '/platform:anycpu', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Core.dll')
+$compilerArgs = @('/nologo', '/codepage:65001', '/langversion:5', '/optimize+', '/platform:anycpu', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Core.dll', '/r:System.Net.Http.dll', '/r:System.Runtime.Serialization.dll', '/r:System.Xml.dll')
 $manifest = Join-Path $root 'src\app.manifest'
 if (Test-Path -LiteralPath $manifest -PathType Leaf) { $compilerArgs += '/win32manifest:' + $manifest }
 $icon = Join-Path $root 'assets\default\mic_on.ico'

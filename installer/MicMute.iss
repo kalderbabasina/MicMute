@@ -4,7 +4,7 @@
 #ifndef OutputDir
   #define OutputDir SourceRoot + "\dist\installer"
 #endif
-#define AppVersion "3.1.0"
+#define AppVersion "3.2.0"
 #define HasRussian FileExists(AddBackslash(CompilerPath) + "Languages\Russian.isl")
 #define HasSpanish FileExists(AddBackslash(CompilerPath) + "Languages\Spanish.isl")
 
@@ -17,6 +17,7 @@ AppPublisher=MicMute contributors
 DefaultDirName={localappdata}\Programs\MicMute
 DefaultGroupName=MicMute
 DisableProgramGroupPage=yes
+UsePreviousTasks=no
 PrivilegesRequired=lowest
 MinVersion=10.0
 OutputDir={#OutputDir}
@@ -82,12 +83,54 @@ Source: "{#SourceRoot}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignorev
 [Icons]
 Name: "{autoprograms}\MicMute"; Filename: "{app}\MicMute2.exe"
 Name: "{autodesktop}\MicMute"; Filename: "{app}\MicMute2.exe"; Tasks: desktopicon
-Name: "{userstartup}\MicMute"; Filename: "{app}\MicMute2.exe"; Tasks: startup
+Name: "{userstartup}\MicMute"; Filename: "{app}\MicMute2.exe"; Parameters: "--startup"; WorkingDir: "{app}"; Check: ShouldWriteStartupLink; Flags: uninsneveruninstall
 
 [Run]
 Filename: "{app}\MicMute2.exe"; Description: "{cm:LaunchMicMute}"; Flags: nowait postinstall skipifsilent unchecked
 
 [Code]
+function IsOwnStartupLink(const LinkPath: String): Boolean;
+var
+  Shell, Shortcut: Variant;
+  Target: String;
+begin
+  Result := False;
+  if not FileExists(LinkPath) then
+    Exit;
+  try
+    Shell := CreateOleObject('WScript.Shell');
+    Shortcut := Shell.CreateShortcut(LinkPath);
+    Target := Shortcut.TargetPath;
+    Result := CompareText(Target, ExpandConstant('{app}\MicMute2.exe')) = 0;
+  except
+    Log('Could not inspect the existing MicMute startup shortcut: ' + GetExceptionMessage);
+  end;
+end;
+
+function ShouldWriteStartupLink(): Boolean;
+var
+  LinkPath: String;
+begin
+  LinkPath := ExpandConstant('{userstartup}\MicMute.lnk');
+  if FileExists(LinkPath) then
+    Result := IsOwnStartupLink(LinkPath)
+  else
+    Result := WizardIsTaskSelected('startup');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  LinkPath: String;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    LinkPath := ExpandConstant('{userstartup}\MicMute.lnk');
+    if IsOwnStartupLink(LinkPath) then
+      if not DeleteFile(LinkPath) then
+        Log('Could not remove the MicMute startup shortcut.');
+  end;
+end;
+
 function InitializeSetup(): Boolean;
 var
   Release: Cardinal;

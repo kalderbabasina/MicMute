@@ -16,14 +16,17 @@ namespace MicMute
         private readonly SoundPlayer[] waves = new SoundPlayer[2];
         private readonly SoundPlayer[] tones = new SoundPlayer[2];
         private readonly string[] mp3 = new string[2];
+        private readonly SoundSource[] sources;
         private Timer monitor;
         private bool open;
 
         internal AudioFeedback(AppConfig config)
         {
+            sources = new[] { config.UnmuteSource, config.MuteSource };
             for (int i = 0; i < 2; i++)
             {
-                string path = SoundPath(i == 1 ? config.MuteSound : config.UnmuteSound);
+                if (sources[i] != SoundSource.Style && sources[i] != SoundSource.Custom) continue;
+                string path = sources[i] == SoundSource.Custom ? SoundPath(i == 1 ? config.MuteSound : config.UnmuteSound) : null;
                 if (path != null)
                 {
                     if (IsMp3(path)) mp3[i] = path;
@@ -131,9 +134,22 @@ namespace MicMute
             foreach (var player in waves) if (player != null) player.Stop();
             foreach (var player in tones) if (player != null) player.Stop();
             int i = muted ? 1 : 0;
+            if (sources[i] == SoundSource.Silent) return;
             if ((mp3[i] != null && TryPlayMp3(mp3[i])) || TryPlayWave(waves[i]) || TryPlayWave(tones[i])) return;
-            if (muted) SystemSounds.Hand.Play();
-            else SystemSounds.Asterisk.Play();
+            WindowsSound(sources[i], muted).Play();
+        }
+
+        internal static SystemSound WindowsSound(SoundSource source, bool muted)
+        {
+            switch (source)
+            {
+                case SoundSource.Error: return SystemSounds.Hand;
+                case SoundSource.Information: return SystemSounds.Asterisk;
+                case SoundSource.Warning: return SystemSounds.Exclamation;
+                case SoundSource.Question: return SystemSounds.Question;
+                case SoundSource.Beep: return SystemSounds.Beep;
+                default: return muted ? SystemSounds.Hand : SystemSounds.Asterisk;
+            }
         }
 
         private static bool TryPlayWave(SoundPlayer player)

@@ -21,7 +21,7 @@ A small, customizable Windows microphone mute controller. Built with **C# / WinF
 - **Keep status in view:** a movable always-on-top indicator with Shift-drag resizing, opacity, and a position lock.
 - **Choose your microphone:** follow the Windows communications default or pin a specific capture device.
 - **Make it yours:** Classic, Outline, and Pixel icons; Windows, Soft, and Arcade sounds; your own images, ICO, WAV, and MP3 files.
-- **Keep it local:** English, Russian, and Spanish. No recording, telemetry, account, or online service.
+- **Keep it local:** English, Russian, Spanish, and playful Ukrainian Surzhyk. No recording, telemetry, or account. The GitHub update check can be disabled.
 
 ## Download
 
@@ -49,7 +49,22 @@ Requires **Windows 10 or newer** with **.NET Framework 4.8 or newer**.
 
 These builds are unsigned. Windows may show a reputation warning for newly downloaded executables. Compare release files with the published SHA-256 checksums.
 
-Settings open on the first run. The app defaults to English; select English, Русский, or Español under **General → Language**. Preferences are stored in `MicMuteConfig.txt` beside the executable; an atomic-save backup uses `.bak`. Keep this file and custom media private. Uninstall removes installed program files but leaves locally created settings and custom files. Keep custom media in a separate folder such as `assets/custom`, not in the installer-managed `assets/default` folder.
+Settings open on the first manual run. The app defaults to English; select English, Русский, Español, or Українська (суржик) under **General → Language**. Preferences are stored in `MicMuteConfig.txt` beside the executable; an atomic-save backup uses `.bak`. Keep this file and custom media private. Uninstall removes installed program files but leaves locally created settings and custom files. Keep custom media in a separate folder such as `assets/custom`, not in the installer-managed `assets/default` folder.
+
+### Start with Windows
+
+In **General**, tick **Start when I sign in to Windows** and select **OK**. Untick it and select **OK** to turn it off. This adds or removes the same per-user Startup shortcut that the installer uses. At sign-in MicMute starts without opening Settings or showing an already-running dialog. It does not change the microphone's mute state, and the overlay still follows your settings.
+
+If the shortcut belongs to another copy, manage it from that copy. After moving a portable copy, disable startup from the old location before moving it, then enable it again from the new location. If Windows has independently disabled MicMute in **Settings → Apps → Startup**, enable it there; MicMute does not override that setting.
+
+### Update MicMute
+
+MicMute checks [GitHub Releases](https://github.com/kalderbabasina/MicMute/releases) once in the background at startup. Turn this off under **General → Check for updates at startup**, or check manually from the tray. If a newer stable version is available, the tray menu offers it.
+
+- **Installed:** approve the download, then approve running Setup after its SHA-256 is verified. MicMute closes when Setup is launched. Update in the same folder to keep your preferences.
+- **Portable:** open the release page, close MicMute, and extract the new portable ZIP over your existing folder. The ZIP does not contain your configuration.
+
+If a release lacks a verifiable installer, MicMute opens its release page instead. Setup files are unsigned; the update check does not bypass Windows download or execution warnings.
 
 ## Use
 
@@ -63,7 +78,7 @@ MicMute changes the endpoint mute state, not an application's separate mute butt
 
 ## Custom appearance and sounds
 
-Choose **Classic**, **Outline**, or **Pixel** under **Appearance → Icon style**. The settings show both built-in states. Choose **Windows**, **Soft**, or **Arcade** under **Sounds → Sound style**. **Preview mute** and **Preview unmute** play the corresponding feedback without changing microphone mute.
+Choose **Classic**, **Outline**, or **Pixel** under **Appearance → Icon style**. Each tray/overlay row previews the selected artwork; **Built-in** restores the selected style for that row. In **Sounds → Sound sources**, independently select a Windows signal, **Custom file (WAV, MP3)**, **No sound**, or **Use sound style** (Windows, Soft or Arcade). **Preview mute** and **Preview unmute** play the corresponding feedback without changing microphone mute.
 
 You can override the preset separately for the muted and active states:
 
@@ -77,7 +92,7 @@ Use transparent images for a clean overlay. Each media file is limited to 16 MB,
 
 ## Privacy and Windows limitations
 
-MicMute does **not record audio**, send network requests, collect telemetry, or include an updater. It reads capture-device mute state and changes it when requested. Preferences contain device identifiers and local file paths, so do not publish your local configuration or backups.
+MicMute does **not record audio** or collect telemetry. It reads capture-device mute state and changes it when requested. The update check requests public release information from GitHub and identifies the app version in its User-Agent; it does not send microphone data, preferences, or file paths. Preferences contain device identifiers and local file paths, so do not publish your local configuration or backups.
 
 The indicator is an ordinary always-on-top desktop window. It cannot guarantee visibility over exclusive-fullscreen applications, UAC's secure desktop, or protected windows. Global shortcuts can also be intercepted or restricted by other software. MicMute is not a security boundary or a hardware microphone disconnect.
 

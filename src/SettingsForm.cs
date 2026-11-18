@@ -17,11 +17,20 @@ namespace MicMute
         private readonly Dictionary<Control, Func<string>> accessibleText = new Dictionary<Control, Func<string>>();
         private static readonly string[] IconStyleNames = { "Классический", "Контурный", "Пиксельный" };
         private static readonly string[] SoundStyleNames = { "Windows", "Мягкий", "Аркадный" };
+        // In SoundSource order, so each selector and the saved setting agree.
+        private static readonly string[] SoundSourceNames =
+        {
+            "По стилю", "Свой файл (WAV, MP3)", "Windows — Ошибка", "Windows — Информация",
+            "Windows — Предупреждение", "Windows — Вопрос", "Windows — Сигнал", "Без звука"
+        };
         private readonly ComboBox languageSelector = new ComboBox();
+        private readonly CheckBox startAtSignIn = new CheckBox { Name = "StartAtSignIn", AutoSize = true };
+        private readonly CheckBox checkUpdatesOnStartup = new CheckBox { Name = "CheckUpdatesOnStartup", AutoSize = true };
         private readonly ComboBox iconStyle = new ComboBox();
         private readonly ComboBox soundStyle = new ComboBox();
-        private readonly PictureBox activePreview = new PictureBox();
-        private readonly PictureBox mutedPreview = new PictureBox();
+        private readonly ComboBox muteSource = new ComboBox();
+        private readonly ComboBox unmuteSource = new ComboBox();
+        private readonly List<PictureBox> artworkPreviews = new List<PictureBox>();
         private readonly List<AudioDeviceInfo> availableDevices = new List<AudioDeviceInfo>();
         private readonly ComboBox microphone = new ComboBox();
         private readonly Label microphoneError = new Label();
@@ -46,12 +55,15 @@ namespace MicMute
         private bool applyingLanguage;
         private string language = "en";
         private string deviceEnumerationError;
-        private VisualAssets previewVisuals;
+        private AudioFeedback previewAudio;
 
         public AppConfig Result { get; private set; }
         public bool ResetOverlayPosition { get; private set; }
+        internal bool StartAtSignIn { get { return startAtSignIn.Checked; } }
 
-        public SettingsForm(AppConfig config)
+        public SettingsForm(AppConfig config) : this(config, false) { }
+
+        internal SettingsForm(AppConfig config, bool? startupEnabled)
         {
             if (config == null) throw new ArgumentNullException("config");
             Result = config.Clone();
@@ -79,7 +91,7 @@ namespace MicMute
             tabs.Dock = DockStyle.Fill;
             root.Controls.Add(tabs, 0, 0);
 
-            BuildGeneralTab();
+            BuildGeneralTab(startupEnabled);
             BuildAppearanceTab();
             BuildSoundTab();
 
@@ -100,10 +112,9 @@ namespace MicMute
             AcceptButton = ok;
             RefreshMicrophones(Result.MicrophoneDeviceId);
             ApplyLanguage(language);
-            UpdateIconPreviews();
         }
 
-        private void BuildGeneralTab()
+        private void BuildGeneralTab(bool? startupEnabled)
         {
             TableLayoutPanel page = AddPage("Основное");
             TableLayoutPanel languages = Grid(2);
@@ -114,15 +125,23 @@ namespace MicMute
             languageSelector.Name = "Language";
             languageSelector.DropDownStyle = ComboBoxStyle.DropDownList;
             languageSelector.Dock = DockStyle.Fill;
-            languageSelector.Items.AddRange(new object[] { "English", "Русский", "Español" });
-            languageSelector.SelectedIndex = language == "ru" ? 1 : language == "es" ? 2 : 0;
+            languageSelector.Items.AddRange(new object[] { "English", "Русский", "Español", "Українська (суржик)" });
+            languageSelector.SelectedIndex = Array.IndexOf(UiText.LanguageCodes, language);
             BindAccessible(languageSelector, "Язык");
             languageSelector.SelectedIndexChanged += delegate
             {
-                if (!applyingLanguage) ApplyLanguage(languageSelector.SelectedIndex == 1 ? "ru" : languageSelector.SelectedIndex == 2 ? "es" : "en");
+                if (!applyingLanguage && languageSelector.SelectedIndex >= 0)
+                    ApplyLanguage(UiText.LanguageCodes[languageSelector.SelectedIndex]);
             };
             languages.Controls.Add(languageSelector, 1, 0);
             page.Controls.Add(languages);
+            BindText(startAtSignIn, startupEnabled.HasValue ? "Запускать при входе в Windows" : "Автозапуск недоступен для этой копии");
+            startAtSignIn.Enabled = startupEnabled.HasValue;
+            startAtSignIn.Checked = startupEnabled == true;
+            page.Controls.Add(startAtSignIn);
+            BindText(checkUpdatesOnStartup, "Проверять обновления при запуске");
+            checkUpdatesOnStartup.Checked = Result.CheckUpdatesOnStartup;
+            page.Controls.Add(checkUpdatesOnStartup);
             TableLayoutPanel devices = Grid(2);
             devices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             devices.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -231,24 +250,18 @@ namespace MicMute
         private void BuildAppearanceTab()
         {
             TableLayoutPanel page = AddPage("Внешний вид");
-            TableLayoutPanel styles = Grid(2);
-            styles.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            styles.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             SetUpStyleSelector(iconStyle, "IconStyle", "Стиль значков", IconStyleNames, Result.IconStyle);
-            styles.Controls.Add(iconStyle, 0, 0);
-            styles.SetColumnSpan(iconStyle, 2);
-            styles.Controls.Add(IconSample(activePreview, "Включён"), 0, 1);
-            styles.Controls.Add(IconSample(mutedPreview, "Выключен"), 1, 1);
-            iconStyle.SelectedIndexChanged += delegate { if (!applyingLanguage) UpdateIconPreviews(); };
+            TableLayoutPanel styles = Stack();
+            styles.Controls.Add(iconStyle);
             AddGroup(page, "Стиль значков", styles);
             page.Controls.Add(Hint("Пустое поле — встроенное оформление. Файлы не копируются: храните их по выбранному пути."));
-            TableLayoutPanel tray = FileGrid();
-            trayOn = AddFileRow(tray, "Включён", Result.TrayOnIcon, FileKind.Icon);
-            trayOff = AddFileRow(tray, "Выключен", Result.TrayOffIcon, FileKind.Icon);
+            TableLayoutPanel tray = FileGrid(true);
+            trayOn = AddFileRow(tray, "Включён", Result.TrayOnIcon, FileKind.Icon, false);
+            trayOff = AddFileRow(tray, "Выключен", Result.TrayOffIcon, FileKind.Icon, true);
             AddGroup(page, "Значок в области уведомлений (ICO)", tray);
-            TableLayoutPanel images = FileGrid();
-            overlayOn = AddFileRow(images, "Включён", Result.OverlayOnImage, FileKind.Image);
-            overlayOff = AddFileRow(images, "Выключен", Result.OverlayOffImage, FileKind.Image);
+            TableLayoutPanel images = FileGrid(true);
+            overlayOn = AddFileRow(images, "Включён", Result.OverlayOnImage, FileKind.Image, false);
+            overlayOff = AddFileRow(images, "Выключен", Result.OverlayOffImage, FileKind.Image, true);
             AddGroup(page, "Плавающий индикатор (PNG, BMP, JPG, ICO)", images);
             page.Controls.Add(Hint("Ограничения: до 16 МБ на файл и до 4096 × 4096 пикселей. Для прозрачного фона используйте PNG или ICO."));
         }
@@ -264,35 +277,61 @@ namespace MicMute
             externalSounds.AutoSize = true;
             externalSounds.Checked = Result.SoundOnExternalChanges;
             page.Controls.Add(externalSounds);
-            TableLayoutPanel styles = Grid(3);
-            styles.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            styles.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            styles.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            TableLayoutPanel styles = Stack();
             SetUpStyleSelector(soundStyle, "SoundStyle", "Стиль звуков", SoundStyleNames, Result.SoundStyle);
-            styles.Controls.Add(soundStyle, 0, 0);
-            Button previewMute = MakeButton("Прослушать выключение");
-            previewMute.Click += delegate { PreviewSound(true); };
-            styles.Controls.Add(previewMute, 1, 0);
-            Button previewUnmute = MakeButton("Прослушать включение");
-            previewUnmute.Click += delegate { PreviewSound(false); };
-            styles.Controls.Add(previewUnmute, 2, 0);
+            styles.Controls.Add(soundStyle);
             AddGroup(page, "Стиль звуков", styles);
+
+            TableLayoutPanel sources = Grid(3);
+            sources.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            sources.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            sources.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            AddSoundSourceRow(sources, muteSource, Result.MuteSource, true);
+            AddSoundSourceRow(sources, unmuteSource, Result.UnmuteSource, false);
+            AddGroup(page, "Источники звука", sources);
 
             TableLayoutPanel sounds = FileGrid();
             muteSound = AddFileRow(sounds, "Выключение", Result.MuteSound, FileKind.Sound);
             unmuteSound = AddFileRow(sounds, "Включение", Result.UnmuteSound, FileKind.Sound);
+            BindSoundFileRow(sounds, 0, muteSource);
+            BindSoundFileRow(sounds, 1, unmuteSource);
             soundStyle.SelectedIndexChanged += delegate { if (!applyingLanguage) ResetSoundPreview(); };
             muteSound.TextChanged += delegate { ResetSoundPreview(); };
             unmuteSound.TextChanged += delegate { ResetSoundPreview(); };
-            GroupBox soundGroup = AddGroup(page, "Звуковые файлы (WAV, MP3)", sounds);
-            page.Controls.Add(Hint("Пустое поле — звук выбранного стиля. WAV и MP3: до 16 МБ на файл. Храните файлы по выбранному пути."));
+            AddGroup(page, "Звуковые файлы (WAV, MP3)", sounds);
+            page.Controls.Add(Hint("Если свой файл недоступен, используется выбранный стиль. WAV и MP3: до 16 МБ на файл."));
             EventHandler updateSoundsEnabled = delegate
             {
                 externalSounds.Enabled = soundsEnabled.Checked;
-                soundGroup.Enabled = soundsEnabled.Checked;
             };
             soundsEnabled.CheckedChanged += updateSoundsEnabled;
             updateSoundsEnabled(null, EventArgs.Empty);
+        }
+
+        private void AddSoundSourceRow(TableLayoutPanel grid, ComboBox selector, SoundSource source, bool muted)
+        {
+            string label = muted ? "Выключение" : "Включение";
+            int row = grid.RowCount++;
+            SetUpStyleSelector(selector, muted ? "MuteSource" : "UnmuteSource", label, SoundSourceNames, (int)source);
+            Button preview = MakeButton(muted ? "Прослушать выключение" : "Прослушать включение");
+            preview.Click += delegate { PreviewSound(muted); };
+            grid.Controls.Add(FieldLabel(label), 0, row);
+            grid.Controls.Add(selector, 1, row);
+            grid.Controls.Add(preview, 2, row);
+        }
+
+        private void BindSoundFileRow(TableLayoutPanel grid, int row, ComboBox selector)
+        {
+            EventHandler update = delegate
+            {
+                if (applyingLanguage) return;
+                bool custom = selector.SelectedIndex == (int)SoundSource.Custom;
+                for (int col = 0; col < grid.ColumnCount; col++)
+                    grid.GetControlFromPosition(col, row).Enabled = custom;
+                ResetSoundPreview();
+            };
+            selector.SelectedIndexChanged += update;
+            update(null, EventArgs.Empty);
         }
 
         private void SetUpStyleSelector(ComboBox combo, string name, string label, string[] styleNames, int selected)
@@ -316,28 +355,39 @@ namespace MicMute
             finally { combo.EndUpdate(); }
         }
 
-        private Control IconSample(PictureBox picture, string label)
+        private void AddArtworkPreview(TableLayoutPanel grid, int row, TextBox field, FileKind kind, bool muted)
         {
-            FlowLayoutPanel sample = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Dock = DockStyle.Fill };
-            picture.Size = new Size(36, 36);
-            picture.SizeMode = PictureBoxSizeMode.Zoom;
-            BindAccessible(picture, label);
-            sample.Controls.Add(picture);
-            sample.Controls.Add(FieldLabel(label));
-            return sample;
-        }
-
-        private void UpdateIconPreviews()
-        {
-            if (iconStyle.SelectedIndex < 0) return;
-            SetIconPreview(activePreview, false);
-            SetIconPreview(mutedPreview, true);
-        }
-
-        private void SetIconPreview(PictureBox picture, bool muted)
-        {
-            using (Icon icon = VisualAssets.CreateStatusIcon(muted, iconStyle.SelectedIndex))
-                SetPreviewImage(picture, icon.ToBitmap());
+            string slot = kind == FileKind.Icon ? "Tray" : "Overlay";
+            PictureBox picture = new PictureBox
+            {
+                Name = slot + (muted ? "MutedPreview" : "ActivePreview"),
+                Size = new Size(32, 32), SizeMode = PictureBoxSizeMode.Zoom, Anchor = AnchorStyles.None
+            };
+            BindAccessible(picture, "{0}: предпросмотр", muted ? "Выключен" : "Включён");
+            artworkPreviews.Add(picture);
+            grid.Controls.Add(picture, 4, row);
+            EventHandler update = delegate
+            {
+                if (applyingLanguage || iconStyle.SelectedIndex < 0) return;
+                Image preview = null;
+                if (kind == FileKind.Icon)
+                    using (Icon icon = VisualAssets.LoadIcon(field.Text))
+                        if (icon != null) preview = icon.ToBitmap();
+                if (kind == FileKind.Image)
+                    using (Image image = VisualAssets.LoadImage(field.Text))
+                        if (image != null)
+                        {
+                            float scale = 64f / Math.Max(image.Width, image.Height);
+                            preview = new Bitmap(image, Math.Max(1, (int)(image.Width * scale)), Math.Max(1, (int)(image.Height * scale)));
+                        }
+                if (preview == null)
+                    using (Icon icon = VisualAssets.CreateStatusIcon(muted, iconStyle.SelectedIndex))
+                        preview = icon.ToBitmap();
+                SetPreviewImage(picture, preview);
+            };
+            iconStyle.SelectedIndexChanged += update;
+            field.TextChanged += update;
+            update(null, EventArgs.Empty);
         }
 
         private static void SetPreviewImage(PictureBox picture, Image next)
@@ -349,21 +399,23 @@ namespace MicMute
 
         private void PreviewSound(bool muted)
         {
-            if (previewVisuals == null)
-                previewVisuals = new VisualAssets(new AppConfig
+            if (previewAudio == null)
+                previewAudio = new AudioFeedback(new AppConfig
                 {
                     SoundStyle = soundStyle.SelectedIndex,
+                    MuteSource = (SoundSource)muteSource.SelectedIndex,
+                    UnmuteSource = (SoundSource)unmuteSource.SelectedIndex,
                     MuteSound = muteSound.Text,
                     UnmuteSound = unmuteSound.Text
                 });
-            previewVisuals.Play(muted);
+            previewAudio.Play(muted);
         }
 
         private void ResetSoundPreview()
         {
-            if (previewVisuals == null) return;
-            previewVisuals.Dispose();
-            previewVisuals = null;
+            if (previewAudio == null) return;
+            previewAudio.Dispose();
+            previewAudio = null;
         }
 
         private void RefreshMicrophones(string preferredId)
@@ -488,6 +540,8 @@ namespace MicMute
             Result.AppLanguage = language;
             Result.IconStyle = iconStyle.SelectedIndex;
             Result.SoundStyle = soundStyle.SelectedIndex;
+            Result.MuteSource = (SoundSource)muteSource.SelectedIndex;
+            Result.UnmuteSource = (SoundSource)unmuteSource.SelectedIndex;
             Result.MicrophoneDeviceId = SelectedDeviceId();
             Result.HotkeyEnabled = hotkeyEnabled.Checked;
             Result.HotkeyKey = capturedKey;
@@ -498,6 +552,7 @@ namespace MicMute
             Result.LockOverlay = lockOverlay.Checked;
             Result.SoundsEnabled = soundsEnabled.Checked;
             Result.SoundOnExternalChanges = externalSounds.Checked;
+            Result.CheckUpdatesOnStartup = checkUpdatesOnStartup.Checked;
             Result.TrayOnIcon = trayOn.Text;
             Result.TrayOffIcon = trayOff.Text;
             Result.OverlayOnImage = overlayOn.Text;
@@ -509,7 +564,7 @@ namespace MicMute
             Close();
         }
 
-        private TextBox AddFileRow(TableLayoutPanel grid, string label, string path, FileKind kind)
+        private TextBox AddFileRow(TableLayoutPanel grid, string label, string path, FileKind kind, bool? artworkMuted = null)
         {
             int row = grid.RowCount++;
             TextBox field = new TextBox();
@@ -519,7 +574,7 @@ namespace MicMute
             BindAccessible(field, "{0}: путь к файлу", label);
             toolTip.SetToolTip(field, field.Text);
             Button browse = MakeButton("Выбрать…");
-            Button reset = MakeButton("Сброс");
+            Button reset = MakeButton(artworkMuted.HasValue ? "Встроенный" : "Сброс");
             BindAccessible(browse, "{0}: выбрать файл", label);
             BindAccessible(reset, "{0}: сбросить файл", label);
             browse.Click += delegate
@@ -553,6 +608,7 @@ namespace MicMute
             grid.Controls.Add(field, 1, row);
             grid.Controls.Add(browse, 2, row);
             grid.Controls.Add(reset, 3, row);
+            if (artworkMuted.HasValue) AddArtworkPreview(grid, row, field, kind, artworkMuted.Value);
             return field;
         }
 
@@ -603,11 +659,13 @@ namespace MicMute
             SuspendLayout();
             try
             {
-                languageSelector.SelectedIndex = language == "ru" ? 1 : language == "es" ? 2 : 0;
+                languageSelector.SelectedIndex = Array.IndexOf(UiText.LanguageCodes, language);
                 foreach (var item in originalText) item.Key.Text = T(item.Value);
                 foreach (var item in accessibleText) item.Key.AccessibleName = item.Value();
                 SetStyleNames(iconStyle, IconStyleNames, iconStyle.SelectedIndex);
                 SetStyleNames(soundStyle, SoundStyleNames, soundStyle.SelectedIndex);
+                SetStyleNames(muteSource, SoundSourceNames, muteSource.SelectedIndex);
+                SetStyleNames(unmuteSource, SoundSourceNames, unmuteSource.SelectedIndex);
                 UpdateMicrophoneChoices(SelectedDeviceId());
                 UpdateHotkeyText();
             }
@@ -660,10 +718,11 @@ namespace MicMute
             return panel;
         }
 
-        private static TableLayoutPanel FileGrid()
+        private static TableLayoutPanel FileGrid(bool artwork = false)
         {
-            TableLayoutPanel grid = Grid(4);
+            TableLayoutPanel grid = Grid(artwork ? 5 : 4);
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            if (artwork) grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -723,8 +782,7 @@ namespace MicMute
             if (disposing)
             {
                 ResetSoundPreview();
-                SetPreviewImage(activePreview, null);
-                SetPreviewImage(mutedPreview, null);
+                foreach (PictureBox preview in artworkPreviews) SetPreviewImage(preview, null);
                 toolTip.Dispose();
             }
             base.Dispose(disposing);

@@ -4,26 +4,34 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
+using System.Diagnostics;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("MicMute")]
 [assembly: AssemblyDescription("Minimal customizable microphone controller")]
-[assembly: AssemblyVersion("3.1.0.0")]
-[assembly: AssemblyFileVersion("3.1.0.0")]
+[assembly: AssemblyVersion("3.2.0.0")]
+[assembly: AssemblyFileVersion("3.2.0.0")]
 [assembly: System.Runtime.Versioning.TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]
 
 namespace MicMute
 {
     internal static class Program
     {
-        internal const string Version = "3.1.0";
+        internal const string Version = "3.2.0";
+        internal const string InstanceMutex = "Local\\MicMute.OpenSource.v3";
         internal static readonly string ConfigPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MicMuteConfig.txt");
+        internal static bool IsStartupLaunch(string[] args)
+        { return args.Length == 1 && String.Equals(args[0], StartupShortcut.Argument, StringComparison.OrdinalIgnoreCase); }
+
         [STAThread]
         private static void Main(string[] args)
         {
+            bool startup = IsStartupLaunch(args);
             bool created;
-            using (var mutex = new Mutex(true, "Local\\MicMute.OpenSource.v3", out created))
+            using (var mutex = new Mutex(true, InstanceMutex, out created))
             {
+                if (!created && startup) return;
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 string language = "en";
@@ -33,9 +41,17 @@ namespace MicMute
                     var config = AppConfig.Load(ConfigPath);
                     language = config.AppLanguage;
                     if (!created) { MessageBox.Show(UiText.Get("MicMute уже запущен. Откройте настройки через значок в трее или на экране.", language), "MicMute"); return; }
-                    using (var app = new MicMuteContext(config, firstRun)) Application.Run(app);
+                    using (var app = new MicMuteContext(config, firstRun, startup)) Application.Run(app);
                 }
-                catch (Exception ex) { MessageBox.Show(UiText.Get("Не удалось запустить MicMute.\n", language) + ex.Message, "MicMute", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+                catch (Exception ex)
+                {
+                    if (!startup) MessageBox.Show(UiText.Get("Не удалось запустить MicMute.\n", language) + ex.Message, "MicMute", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    else
+                    {
+                        System.Diagnostics.Trace.TraceError("MicMute sign-in launch failed: {0}", ex);
+                        Environment.ExitCode = 1;
+                    }
+                }
                 finally { if (created) mutex.ReleaseMutex(); }
             }
         }
@@ -78,13 +94,16 @@ namespace MicMute
         private readonly NotifyIcon tray;
         private readonly OverlayForm overlay;
         private readonly ContextMenuStrip menu;
-        private readonly ToolStripMenuItem toggleItem, settingsItem, exitItem;
+        private readonly ToolStripMenuItem toggleItem, settingsItem, updatesItem, exitItem;
         private readonly HotkeyWindow hotkey;
         private readonly System.Windows.Forms.Timer timer;
         private bool? state;
         private bool statusInitialized, settingsOpen, disposed, saveErrorShown;
+        private readonly CancellationTokenSource updateCancellation = new CancellationTokenSource();
+        private GitHubUpdates.Release availableUpdate;
+        private bool updateBusy;
 
-        public MicMuteContext(AppConfig initialConfig, bool firstRun)
+        public MicMuteContext(AppConfig initialConfig, bool firstRun, bool startup)
         {
             config = initialConfig;
             assets = new VisualAssets(config);
@@ -93,6 +112,8 @@ namespace MicMute
             menu.Items.Add(toggleItem);
             settingsItem = new ToolStripMenuItem(T("Настройки…"), null, (s, e) => ShowSettings());
             menu.Items.Add(settingsItem);
+            updatesItem = new ToolStripMenuItem(T("Проверить обновления…"), null, (s, e) => CheckUpdates(true));
+            menu.Items.Add(updatesItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(new ToolStripMenuItem("MicMute " + Program.Version) { Enabled = false });
             exitItem = new ToolStripMenuItem(T("Выход"), null, (s, e) => ExitThread());
@@ -105,7 +126,7 @@ namespace MicMute
             overlay.ApplyConfig(config, assets, false);
             hotkey = new HotkeyWindow();
             hotkey.Pressed += (s, e) => { if (!settingsOpen) Toggle(); };
-            if (!hotkey.Apply(config)) Balloon("Горячая клавиша недоступна. Выберите другую в настройках.");
+            if (!hotkey.Apply(config) && !startup) Balloon("Горячая клавиша недоступна. Выберите другую в настройках.");
             RefreshStatus(false);
             timer = new System.Windows.Forms.Timer { Interval = 500 };
             timer.Tick += (s, e) =>
@@ -114,12 +135,80 @@ namespace MicMute
                 RefreshStatus(true);
             };
             timer.Start();
-            if (firstRun)
+            if (config.CheckUpdatesOnStartup || (firstRun && !startup))
             {
                 EventHandler onIdle = null;
-                onIdle = (s, e) => { Application.Idle -= onIdle; if (!disposed) ShowSettings(); };
+                onIdle = (s, e) =>
+                {
+                    Application.Idle -= onIdle;
+                    if (disposed) return;
+                    if (config.CheckUpdatesOnStartup) CheckUpdates(false);
+                    if (firstRun && !startup) ShowSettings();
+                };
                 Application.Idle += onIdle;
             }
+        }
+
+        private async void CheckUpdates(bool manual)
+        {
+            if (disposed || updateBusy || (manual && settingsOpen)) return;
+            updateBusy = true;
+            updatesItem.Enabled = false;
+            try
+            {
+                if (availableUpdate == null)
+                    availableUpdate = await GitHubUpdates.CheckAsync(new Version(Program.Version), updateCancellation.Token);
+                if (disposed) return;
+                UpdateTrayItem();
+                if (!manual)
+                {
+                    if (availableUpdate != null && config.CheckUpdatesOnStartup)
+                        tray.ShowBalloonTip(4000, "MicMute", T("Доступно обновление. Откройте меню MicMute в трее."), ToolTipIcon.Info);
+                }
+                else if (!settingsOpen)
+                {
+                    if (availableUpdate == null)
+                        MessageBox.Show(T("У вас актуальная версия."), "MicMute", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    else await OfferUpdate(availableUpdate);
+                }
+            }
+            catch (Exception)
+            {
+                if (manual && !disposed)
+                    MessageBox.Show(T("Не удалось получить обновление с GitHub. Попробуйте ещё раз позже."),
+                        "MicMute", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                updateBusy = false;
+                if (!disposed) updatesItem.Enabled = true;
+            }
+        }
+
+        private void UpdateTrayItem()
+        {
+            updatesItem.Text = availableUpdate == null ? T("Проверить обновления…") :
+                String.Format(T("Обновление {0}…"), availableUpdate.Version);
+        }
+
+        private async Task OfferUpdate(GitHubUpdates.Release release)
+        {
+            bool canInstall = release.InstallerUrl != null && GitHubUpdates.IsInstalledCopy(Application.ExecutablePath);
+            string prompt = canInstall ? "Доступна версия {0}. Скачать установщик с GitHub?" :
+                "Доступна версия {0}. Открыть страницу скачивания на GitHub?";
+            if (MessageBox.Show(String.Format(T(prompt), release.Version), "MicMute",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            if (!canInstall)
+            {
+                using (Process.Start(new ProcessStartInfo(release.Page) { UseShellExecute = true })) { }
+                return;
+            }
+            byte[] bytes = await GitHubUpdates.DownloadAsync(release, updateCancellation.Token);
+            if (disposed || settingsOpen) return;
+            if (MessageBox.Show(T("Контрольная сумма совпала. Запустить установщик? MicMute закроется."),
+                "MicMute", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            GitHubUpdates.LaunchInstaller(release, bytes);
+            ExitThread();
         }
 
         private void RefreshStatus(bool external)
@@ -160,7 +249,15 @@ namespace MicMute
             hotkey.Apply(new AppConfig { HotkeyEnabled = false });
             try
             {
-                using (var dialog = new SettingsForm(config))
+                string startupPath = null;
+                bool? startupEnabled = null;
+                try
+                {
+                    startupPath = StartupShortcut.PathForCurrentUser();
+                    startupEnabled = StartupShortcut.GetState(startupPath, Application.ExecutablePath);
+                }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("Cannot read MicMute startup: {0}", ex.Message); }
+                using (var dialog = new SettingsForm(config, startupEnabled))
                 {
                     while (dialog.ShowDialog() == DialogResult.OK)
                     {
@@ -189,12 +286,22 @@ namespace MicMute
                         VisualAssets previous = assets;
                         config = candidate; assets = replacement;
                         settingsItem.Text = T("Настройки…");
+                        UpdateTrayItem();
                         exitItem.Text = T("Выход");
                         overlay.ApplyConfig(config, assets, dialog.ResetOverlayPosition);
                         statusInitialized = false;
                         RefreshStatus(false);
                         previous.Dispose();
                         saveErrorShown = false;
+                        if (startupEnabled.HasValue && startupEnabled.Value != dialog.StartAtSignIn)
+                        {
+                            try { StartupShortcut.SetEnabled(startupPath, Application.ExecutablePath, dialog.StartAtSignIn); }
+                            catch (Exception ex)
+                            {
+                                MessageBox.Show(T("Настройки сохранены, но изменить автозапуск не удалось.\n") + ex.Message,
+                                    "MicMute", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            }
+                        }
                         break;
                     }
                 }
@@ -216,6 +323,8 @@ namespace MicMute
             if (disposing && !disposed)
             {
                 disposed = true;
+                updateCancellation.Cancel();
+                updateCancellation.Dispose();
                 timer.Stop(); timer.Dispose();
                 hotkey.Dispose(); overlay.Dispose();
                 tray.Visible = false; tray.Dispose(); menu.Dispose(); assets.Dispose();
